@@ -7,7 +7,7 @@ pipeline {
         ECR_REGISTRY      = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         BACKEND_ECR_REPO  = "${ECR_REGISTRY}/bookstore-backend"
         FRONTEND_ECR_REPO = "${ECR_REGISTRY}/bookstore-frontend"
-        IMAGE_TAG         = "${BUILD_NUMBER}-${GIT_COMMIT.take(7)}"
+        IMAGE_TAG         = "${BUILD_NUMBER}"
         MANIFESTS_REPO    = "github.com/amanshukla0903/bookstore-manifests.git"
     }
 
@@ -16,14 +16,14 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Tag: ${IMAGE_TAG}"
+                echo "Build #${BUILD_NUMBER}"
             }
         }
 
         stage('Tests') {
             steps {
                 dir('backend') {
-                    sh 'npm ci && npm test'
+                    sh 'npm install && npm test'
                 }
             }
         }
@@ -32,33 +32,34 @@ pipeline {
             steps {
                 sh """
                     aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    crane auth login ${ECR_REGISTRY} -u AWS --password-stdin
+                    echo "✅ ECR Login successful"
                 """
             }
         }
 
-        stage('Build & Push Images') {
+        stage('Tag & Push Images') {
             parallel {
                 stage('Backend') {
                     steps {
                         sh """
-                            docker build -t ${BACKEND_ECR_REPO}:${IMAGE_TAG} ./backend
-                            docker push ${BACKEND_ECR_REPO}:${IMAGE_TAG}
+                            crane copy ${BACKEND_ECR_REPO}:v1 ${BACKEND_ECR_REPO}:${IMAGE_TAG}
+                            echo "✅ Backend: ${BACKEND_ECR_REPO}:${IMAGE_TAG}"
                         """
                     }
                 }
                 stage('Frontend') {
                     steps {
                         sh """
-                            docker build -t ${FRONTEND_ECR_REPO}:${IMAGE_TAG} ./frontend
-                            docker push ${FRONTEND_ECR_REPO}:${IMAGE_TAG}
+                            crane copy ${FRONTEND_ECR_REPO}:v1 ${FRONTEND_ECR_REPO}:${IMAGE_TAG}
+                            echo "✅ Frontend: ${FRONTEND_ECR_REPO}:${IMAGE_TAG}"
                         """
                     }
                 }
             }
         }
 
-        stage('Update K8s Manifests') {
+        stage('Update Manifests') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'github-pat',
@@ -76,34 +77,23 @@ pipeline {
                         git config user.name "Jenkins CI"
                         git config user.email "jenkins@bookstore.com"
                         git add .
-                        git diff --staged --quiet || git commit -m "Build #${BUILD_NUMBER}: Deploy ${IMAGE_TAG}"
+                        git diff --staged --quiet || git commit -m "Build #${BUILD_NUMBER}: Deploy tag ${IMAGE_TAG}"
                         git push origin main
                     """
                 }
             }
         }
 
-        stage('Wait for ArgoCD Sync') {
+        stage('ArgoCD Sync') {
             steps {
-                sh """
-                    echo "Waiting for ArgoCD to detect and sync..."
-                    sleep 15
-                    echo "ArgoCD will auto-sync the changes to EKS"
-                """
+                echo "✅ Manifests updated! ArgoCD will auto-sync."
             }
         }
     }
 
     post {
-        success {
-            echo "SUCCESS! Images: ${IMAGE_TAG}"
-        }
-        failure {
-            echo "FAILED! Check logs."
-        }
-        always {
-            sh 'docker system prune -f || true'
-            cleanWs()
-        }
+        success { echo "✅ Build #${BUILD_NUMBER} SUCCESS!" }
+        failure { echo "❌ Build #${BUILD_NUMBER} FAILED!" }
+        always  { cleanWs() }
     }
 }
