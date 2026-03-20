@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BookStore - DevOps Project</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 BookStore</h1>
+            <p class="subtitle">DevOps Project — EKS + Jenkins + ArgoCD</p>
+        </header>
+
+        <div class="info-banner" id="infoBanner">
+            Loading app info...
+        </div>
+
+        <div class="card add-book-section">
+            <h2>➕ Add New Book</h2>
+            <form id="addBookForm">
+                <div class="form-row">
+                    <input type="text" id="bookTitle" placeholder="Book Title" required>
+                    <input type="text" id="bookAuthor" placeholder="Author" required>
+                    <input type="number" id="bookPrice" placeholder="Price" step="0.01" required>
+                    <button type="submit" class="btn btn-primary">Add Book</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <div class="section-header">
+                <h2>📖 Available Books</h2>
+                <button class="btn btn-secondary" onclick="loadBooks()">🔄 Refresh</button>
+            </div>
+            <div id="booksList" class="books-grid">
+                Loading books...
+            </div>
+        </div>
+
+        <div class="card architecture">
+            <h2>🏗️ Architecture</h2>
+            <div class="arch-flow">
+                <span class="arch-item">Jenkins (CI)</span>
+                <span class="arrow">→</span>
+                <span class="arch-item">ECR (Images)</span>
+                <span class="arrow">→</span>
+                <span class="arch-item">ArgoCD (CD)</span>
+                <span class="arrow">→</span>
+                <span class="arch-item">EKS (K8s)</span>
+                <span class="arrow">→</span>
+                <span class="arch-item">ALB Ingress</span>
+            </div>
+        </div>
+
+        <footer>
+            <p>Built for DevOps Learning | Powered by AWS EKS, Jenkins, ArgoCD</p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        async function loadInfo() {
+            try {
+                const res = await fetch(API_BASE + '/info');
+                const data = await res.json();
+                document.getElementById('infoBanner').innerHTML =
+                    '🟢 <strong>' + data.app + '</strong> | Version: <strong>' + data.version +
+                    '</strong> | Env: <strong>' + data.environment +
+                    '</strong> | Pod: <strong>' + data.pod + '</strong>';
+            } catch (err) {
+                document.getElementById('infoBanner').innerHTML =
+                    '🔴 Backend not reachable — Check your /api connection';
+            }
+        }
+
+        async function loadBooks() {
+            try {
+                const res = await fetch(API_BASE + '/books');
+                const json = await res.json();
+                const booksDiv = document.getElementById('booksList');
+
+                if (json.data.length === 0) {
+                    booksDiv.innerHTML = '<p>No books found. Add one above!</p>';
+                    return;
+                }
+
+                booksDiv.innerHTML = json.data.map(function(book) {
+                    return '<div class="book-card">' +
+                        '<div class="book-title">' + book.title + '</div>' +
+                        '<div class="book-author">by ' + book.author + '</div>' +
+                        '<div class="book-price">$' + book.price.toFixed(2) + '</div>' +
+                        '<div class="book-rating">⭐ ' + book.rating + '/5</div>' +
+                        '<button class="btn btn-danger" onclick="deleteBook(' + book.id + ')">🗑️ Delete</button>' +
+                        '</div>';
+                }).join('');
+            } catch (err) {
+                document.getElementById('booksList').innerHTML =
+                    '<p class="error">❌ Failed to load books. Is the backend running?</p>';
+            }
+        }
+
+        document.getElementById('addBookForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var book = {
+                title: document.getElementById('bookTitle').value,
+                author: document.getElementById('bookAuthor').value,
+                price: parseFloat(document.getElementById('bookPrice').value),
+                rating: 4.0
+            };
+
+            try {
+                await fetch(API_BASE + '/books', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(book)
+                });
+                document.getElementById('addBookForm').reset();
+                loadBooks();
+            } catch (err) {
+                alert('Failed to add book!');
+            }
+        });
+
+        async function deleteBook(id) {
+            try {
+                await fetch(API_BASE + '/books/' + id, { method: 'DELETE' });
+                loadBooks();
+            } catch (err) {
+                alert('Failed to delete book!');
+            }
+        }
+
+        loadInfo();
+        loadBooks();
+    </script>
+</body>
+</html>
