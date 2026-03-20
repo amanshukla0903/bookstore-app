@@ -13,6 +13,7 @@ let books = [
   { id: 3, title: "Terraform Up & Running", author: "Yevgeniy Brikman", price: 39.99, rating: 4.6 },
   { id: 4, title: "The Phoenix Project", author: "Gene Kim", price: 24.99, rating: 4.9 },
   { id: 5, title: "Site Reliability Engineering", author: "Google", price: 42.99, rating: 4.5 }
+  { id: 6, title: "Docker Deep Dive", author: "Nigel Poulton", price: 29.99, rating: 4.4 },
 ];
 
 // Health check endpoint
