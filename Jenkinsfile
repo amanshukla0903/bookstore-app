@@ -16,7 +16,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Build #${BUILD_NUMBER}"
+                echo "🚀 Build #${BUILD_NUMBER} started"
             }
         }
 
@@ -28,31 +28,233 @@ pipeline {
             }
         }
 
-        stage('ECR Login') {
+        stage('Refresh ECR Token') {
             steps {
                 sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    crane auth login ${ECR_REGISTRY} -u AWS --password-stdin
-                    echo "✅ ECR Login successful"
+                    TOKEN=$(aws ecr get-login-password --region ${AWS_REGION})
+                    kubectl delete secret ecr-credentials -n jenkins 2>/dev/null || true
+                    kubectl create secret docker-registry ecr-credentials \
+                        --docker-server=${ECR_REGISTRY} \
+                        --docker-username=AWS \
+                        --docker-password=$TOKEN \
+                        -n jenkins
+                    echo "✅ ECR token refreshed"
                 """
             }
         }
 
-        stage('Tag & Push Images') {
+        stage('Build & Push Images') {
             parallel {
-                stage('Backend') {
+                stage('Backend Image') {
                     steps {
                         sh """
-                            crane copy ${BACKEND_ECR_REPO}:v1 ${BACKEND_ECR_REPO}:${IMAGE_TAG}
-                            echo "✅ Backend: ${BACKEND_ECR_REPO}:${IMAGE_TAG}"
+                            echo "🐳 Building backend with Kaniko..."
+
+                            # Create build context tar
+                            cd backend
+                            tar -czf /tmp/backend-context.tar.gz .
+                            cd ..
+
+                            # Create Kaniko pod YAML
+                            cat > /tmp/kaniko-backend.yaml << 'KANEOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaniko-backend-${BUILD_NUMBER}
+  namespace: jenkins
+spec:
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - "--context=dir:///workspace"
+        - "--destination=${BACKEND_ECR_REPO}:${IMAGE_TAG}"
+        - "--cache=false"
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker
+        - name: build-context
+          mountPath: /workspace
+  restartPolicy: Never
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: ecr-credentials
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: build-context
+      emptyDir: {}
+  initContainers:
+    - name: copy-context
+      image: busybox
+      command: ['sh', '-c', 'cp -r /context/* /workspace/']
+      volumeMounts:
+        - name: build-context
+          mountPath: /workspace
+        - name: context-source
+          mountPath: /context
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: ecr-credentials
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: build-context
+      emptyDir: {}
+    - name: context-source
+      emptyDir: {}
+KANEOF
+
+                            # Simpler approach: Use kubectl + configmap
+                            # Delete old configmap/pod if exists
+                            kubectl delete configmap backend-source-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+                            kubectl delete pod kaniko-backend-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+
+                            # Create configmap from source files
+                            kubectl create configmap backend-source-${BUILD_NUMBER} \
+                                --from-file=backend/Dockerfile \
+                                --from-file=backend/server.js \
+                                --from-file=backend/package.json \
+                                -n jenkins
+
+                            # Run Kaniko pod
+                            cat << KEOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaniko-backend-${BUILD_NUMBER}
+  namespace: jenkins
+spec:
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - "--dockerfile=/workspace/Dockerfile"
+        - "--context=/workspace"
+        - "--destination=${BACKEND_ECR_REPO}:${IMAGE_TAG}"
+        - "--cache=false"
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker
+        - name: source
+          mountPath: /workspace
+  restartPolicy: Never
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: ecr-credentials
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: source
+      configMap:
+        name: backend-source-${BUILD_NUMBER}
+        items:
+          - key: Dockerfile
+            path: Dockerfile
+          - key: server.js
+            path: server.js
+          - key: package.json
+            path: package.json
+KEOF
+
+                            echo "⏳ Waiting for Kaniko backend build..."
+                            kubectl wait --for=condition=Ready pod/kaniko-backend-${BUILD_NUMBER} -n jenkins --timeout=30s 2>/dev/null || true
+                            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/kaniko-backend-${BUILD_NUMBER} -n jenkins --timeout=300s || \
+                            kubectl wait --for=jsonpath='{.status.phase}'=Failed pod/kaniko-backend-${BUILD_NUMBER} -n jenkins --timeout=300s || true
+
+                            # Check result
+                            STATUS=$(kubectl get pod kaniko-backend-${BUILD_NUMBER} -n jenkins -o jsonpath='{.status.phase}')
+                            echo "Kaniko status: $STATUS"
+
+                            if [ "$STATUS" != "Succeeded" ]; then
+                                echo "❌ Kaniko build failed! Logs:"
+                                kubectl logs kaniko-backend-${BUILD_NUMBER} -n jenkins
+                                exit 1
+                            fi
+
+                            echo "✅ Backend image pushed: ${BACKEND_ECR_REPO}:${IMAGE_TAG}"
+
+                            # Cleanup
+                            kubectl delete pod kaniko-backend-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+                            kubectl delete configmap backend-source-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
                         """
                     }
                 }
-                stage('Frontend') {
+                stage('Frontend Image') {
                     steps {
                         sh """
-                            crane copy ${FRONTEND_ECR_REPO}:v1 ${FRONTEND_ECR_REPO}:${IMAGE_TAG}
-                            echo "✅ Frontend: ${FRONTEND_ECR_REPO}:${IMAGE_TAG}"
+                            echo "🐳 Building frontend with Kaniko..."
+
+                            kubectl delete configmap frontend-source-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+                            kubectl delete pod kaniko-frontend-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+
+                            kubectl create configmap frontend-source-${BUILD_NUMBER} \
+                                --from-file=frontend/Dockerfile \
+                                --from-file=frontend/index.html \
+                                --from-file=frontend/style.css \
+                                --from-file=frontend/nginx.conf \
+                                -n jenkins
+
+                            cat << KEOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaniko-frontend-${BUILD_NUMBER}
+  namespace: jenkins
+spec:
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - "--dockerfile=/workspace/Dockerfile"
+        - "--context=/workspace"
+        - "--destination=${FRONTEND_ECR_REPO}:${IMAGE_TAG}"
+        - "--cache=false"
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker
+        - name: source
+          mountPath: /workspace
+  restartPolicy: Never
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: ecr-credentials
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: source
+      configMap:
+        name: frontend-source-${BUILD_NUMBER}
+        items:
+          - key: Dockerfile
+            path: Dockerfile
+          - key: index.html
+            path: index.html
+          - key: style.css
+            path: style.css
+          - key: nginx.conf
+            path: nginx.conf
+KEOF
+
+                            echo "⏳ Waiting for Kaniko frontend build..."
+                            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/kaniko-frontend-${BUILD_NUMBER} -n jenkins --timeout=300s || \
+                            kubectl wait --for=jsonpath='{.status.phase}'=Failed pod/kaniko-frontend-${BUILD_NUMBER} -n jenkins --timeout=300s || true
+
+                            STATUS=$(kubectl get pod kaniko-frontend-${BUILD_NUMBER} -n jenkins -o jsonpath='{.status.phase}')
+                            if [ "$STATUS" != "Succeeded" ]; then
+                                echo "❌ Frontend build failed!"
+                                kubectl logs kaniko-frontend-${BUILD_NUMBER} -n jenkins
+                                exit 1
+                            fi
+
+                            echo "✅ Frontend image pushed: ${FRONTEND_ECR_REPO}:${IMAGE_TAG}"
+
+                            kubectl delete pod kaniko-frontend-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
+                            kubectl delete configmap frontend-source-${BUILD_NUMBER} -n jenkins 2>/dev/null || true
                         """
                     }
                 }
@@ -77,7 +279,7 @@ pipeline {
                         git config user.name "Jenkins CI"
                         git config user.email "jenkins@bookstore.com"
                         git add .
-                        git diff --staged --quiet || git commit -m "Build #${BUILD_NUMBER}: Deploy tag ${IMAGE_TAG}"
+                        git diff --staged --quiet || git commit -m "Build #${BUILD_NUMBER}: Deploy ${IMAGE_TAG}"
                         git push origin main
                     """
                 }
@@ -86,7 +288,7 @@ pipeline {
 
         stage('ArgoCD Sync') {
             steps {
-                echo "✅ Manifests updated! ArgoCD will auto-sync."
+                echo "✅ Manifests updated! ArgoCD will auto-sync in ~3 min"
             }
         }
     }
