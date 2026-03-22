@@ -49,14 +49,14 @@ pipeline {
                     steps {
                         sh '''
                             echo "Building backend..."
-                            kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
+
                             kubectl delete pod kaniko-backend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
+                            kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
 
                             kubectl create configmap backend-src-$BUILD_NUMBER \
-                                --from-file=backend/Dockerfile \
-                                --from-file=backend/server.js \
-                                --from-file=backend/package.json \
-                                --from-file=backend/package-lock.json \
+                                --from-file=Dockerfile=backend/Dockerfile \
+                                --from-file=server.js=backend/server.js \
+                                --from-file=package.json=backend/package.json \
                                 -n jenkins
 
                             cat <<KEOF | kubectl apply -f -
@@ -66,6 +66,23 @@ metadata:
   name: kaniko-backend-$BUILD_NUMBER
   namespace: jenkins
 spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command:
+        - sh
+        - -c
+        - |
+          cp /src/Dockerfile /workspace/Dockerfile
+          cp /src/server.js /workspace/server.js
+          cp /src/package.json /workspace/package.json
+          echo "Files copied:"
+          ls -la /workspace/
+      volumeMounts:
+        - name: source
+          mountPath: /src
+        - name: workspace
+          mountPath: /workspace
   containers:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
@@ -77,7 +94,7 @@ spec:
       volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker
-        - name: source
+        - name: workspace
           mountPath: /workspace
   restartPolicy: Never
   volumes:
@@ -90,15 +107,8 @@ spec:
     - name: source
       configMap:
         name: backend-src-$BUILD_NUMBER
-        items:
-          - key: Dockerfile
-            path: Dockerfile
-          - key: server.js
-            path: server.js
-          - key: package.json
-            path: package.json
-          - key: package-lock.json
-            path: package-lock.json
+    - name: workspace
+      emptyDir: {}
 KEOF
 
                             echo "Waiting for backend build..."
@@ -110,7 +120,10 @@ KEOF
                             echo "Status: $STATUS"
 
                             if [ "$STATUS" != "Succeeded" ]; then
-                                kubectl logs kaniko-backend-$BUILD_NUMBER -n jenkins
+                                echo "FAILED! Init container logs:"
+                                kubectl logs kaniko-backend-$BUILD_NUMBER -n jenkins -c copy-source 2>/dev/null || true
+                                echo "Kaniko logs:"
+                                kubectl logs kaniko-backend-$BUILD_NUMBER -n jenkins -c kaniko 2>/dev/null || true
                                 kubectl delete pod kaniko-backend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 exit 1
@@ -126,14 +139,15 @@ KEOF
                     steps {
                         sh '''
                             echo "Building frontend..."
-                            kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
+
                             kubectl delete pod kaniko-frontend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
+                            kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
 
                             kubectl create configmap frontend-src-$BUILD_NUMBER \
-                                --from-file=frontend/Dockerfile \
-                                --from-file=frontend/index.html \
-                                --from-file=frontend/style.css \
-                                --from-file=frontend/nginx.conf \
+                                --from-file=Dockerfile=frontend/Dockerfile \
+                                --from-file=index.html=frontend/index.html \
+                                --from-file=style.css=frontend/style.css \
+                                --from-file=nginx.conf=frontend/nginx.conf \
                                 -n jenkins
 
                             cat <<KEOF | kubectl apply -f -
@@ -143,6 +157,24 @@ metadata:
   name: kaniko-frontend-$BUILD_NUMBER
   namespace: jenkins
 spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command:
+        - sh
+        - -c
+        - |
+          cp /src/Dockerfile /workspace/Dockerfile
+          cp /src/index.html /workspace/index.html
+          cp /src/style.css /workspace/style.css
+          cp /src/nginx.conf /workspace/nginx.conf
+          echo "Files copied:"
+          ls -la /workspace/
+      volumeMounts:
+        - name: source
+          mountPath: /src
+        - name: workspace
+          mountPath: /workspace
   containers:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
@@ -154,7 +186,7 @@ spec:
       volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker
-        - name: source
+        - name: workspace
           mountPath: /workspace
   restartPolicy: Never
   volumes:
@@ -167,15 +199,8 @@ spec:
     - name: source
       configMap:
         name: frontend-src-$BUILD_NUMBER
-        items:
-          - key: Dockerfile
-            path: Dockerfile
-          - key: index.html
-            path: index.html
-          - key: style.css
-            path: style.css
-          - key: nginx.conf
-            path: nginx.conf
+    - name: workspace
+      emptyDir: {}
 KEOF
 
                             echo "Waiting for frontend build..."
@@ -187,7 +212,9 @@ KEOF
                             echo "Status: $STATUS"
 
                             if [ "$STATUS" != "Succeeded" ]; then
-                                kubectl logs kaniko-frontend-$BUILD_NUMBER -n jenkins
+                                echo "FAILED! Logs:"
+                                kubectl logs kaniko-frontend-$BUILD_NUMBER -n jenkins -c copy-source 2>/dev/null || true
+                                kubectl logs kaniko-frontend-$BUILD_NUMBER -n jenkins -c kaniko 2>/dev/null || true
                                 kubectl delete pod kaniko-frontend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 exit 1
