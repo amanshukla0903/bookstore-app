@@ -14,7 +14,8 @@ let books = [
   { id: 5, title: "Site Reliability Engineering", author: "Google", price: 42.99, rating: 4.5 },
   { id: 6, title: "DevOps by Aman", author: "Aman", price: 49.99, rating: 5.0 },
   { id: 7, title: "Cloud Engineering with Suraj", author: "Suraj", price: 44.99, rating: 4.9 },
-  { id: 8, title: "Mastering CI/CD by Rahul", author: "Rahul", price: 39.99, rating: 4.8 }
+  { id: 8, title: "Mastering CI/CD by Rahul", author: "Rahul", price: 39.99, rating: 4.8 },
+  { id: 9, title: "Kubernetes Secrets by Priya", author: "Priya", price: 34.99, rating: 4.7 }
 ];
 
 app.get('/api/health', (req, res) => {
