@@ -13,16 +13,12 @@ let books = [
   { id: 4, title: "The Phoenix Project", author: "Gene Kim", price: 24.99, rating: 4.9 },
   { id: 5, title: "Site Reliability Engineering", author: "Google", price: 42.99, rating: 4.5 },
   { id: 6, title: "DevOps by Aman", author: "Aman", price: 49.99, rating: 5.0 },
-  { id: 7, title: "Cloud Engineering with Suraj", author: "Suraj", price: 44.99, rating: 4.9 }
+  { id: 7, title: "Cloud Engineering with Suraj", author: "Suraj", price: 44.99, rating: 4.9 },
+  { id: 8, title: "Mastering CI/CD by Rahul", author: "Rahul", price: 39.99, rating: 4.8 }
 ];
 
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'bookstore-backend',
-    timestamp: new Date().toISOString(),
-    version: process.env.APP_VERSION || '1.0.0'
-  });
+  res.json({ status: 'healthy', service: 'bookstore-backend', timestamp: new Date().toISOString(), version: process.env.APP_VERSION || '1.0.0' });
 });
 
 app.get('/api/books', (req, res) => {
@@ -36,13 +32,7 @@ app.get('/api/books/:id', (req, res) => {
 });
 
 app.post('/api/books', (req, res) => {
-  const newBook = {
-    id: books.length + 1,
-    title: req.body.title,
-    author: req.body.author,
-    price: req.body.price,
-    rating: req.body.rating || 0
-  };
+  const newBook = { id: books.length + 1, title: req.body.title, author: req.body.author, price: req.body.price, rating: req.body.rating || 0 };
   books.push(newBook);
   res.status(201).json({ success: true, data: newBook });
 });
@@ -55,15 +45,7 @@ app.delete('/api/books/:id', (req, res) => {
 });
 
 app.get('/api/info', (req, res) => {
-  res.json({
-    app: 'BookStore API',
-    version: process.env.APP_VERSION || '1.0.0',
-    environment: process.env.APP_ENV || 'development',
-    pod: process.env.HOSTNAME || 'local',
-    nodeInfo: 'Running on ' + process.platform
-  });
+  res.json({ app: 'BookStore API', version: process.env.APP_VERSION || '1.0.0', environment: process.env.APP_ENV || 'development', pod: process.env.HOSTNAME || 'local', nodeInfo: 'Running on ' + process.platform });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('BookStore Backend running on port ' + PORT);
-});
+app.listen(PORT, '0.0.0.0', () => { console.log('BookStore Backend running on port ' + PORT); });
