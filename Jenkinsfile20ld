@@ -48,7 +48,8 @@ pipeline {
                 stage('Backend Image') {
                     steps {
                         sh '''
-                            echo "Building backend..."
+                            echo "Building backend with Kaniko..."
+
                             kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                             kubectl delete pod kaniko-backend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
 
@@ -56,7 +57,6 @@ pipeline {
                                 --from-file=backend/Dockerfile \
                                 --from-file=backend/server.js \
                                 --from-file=backend/package.json \
-                                --from-file=backend/package-lock.json \
                                 -n jenkins
 
                             cat <<KEOF | kubectl apply -f -
@@ -97,26 +97,25 @@ spec:
             path: server.js
           - key: package.json
             path: package.json
-          - key: package-lock.json
-            path: package-lock.json
 KEOF
 
-                            echo "Waiting for backend build..."
-                            sleep 15
+                            echo "Waiting for Kaniko backend build..."
+                            sleep 10
                             kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
                                 pod/kaniko-backend-$BUILD_NUMBER -n jenkins --timeout=300s || true
 
                             STATUS=$(kubectl get pod kaniko-backend-$BUILD_NUMBER -n jenkins -o jsonpath='{.status.phase}')
-                            echo "Status: $STATUS"
+                            echo "Backend build status: $STATUS"
 
                             if [ "$STATUS" != "Succeeded" ]; then
+                                echo "Backend build failed! Logs:"
                                 kubectl logs kaniko-backend-$BUILD_NUMBER -n jenkins
                                 kubectl delete pod kaniko-backend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 exit 1
                             fi
 
-                            echo "Backend pushed!"
+                            echo "Backend image pushed!"
                             kubectl delete pod kaniko-backend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                             kubectl delete configmap backend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                         '''
@@ -125,7 +124,8 @@ KEOF
                 stage('Frontend Image') {
                     steps {
                         sh '''
-                            echo "Building frontend..."
+                            echo "Building frontend with Kaniko..."
+
                             kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                             kubectl delete pod kaniko-frontend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
 
@@ -178,22 +178,23 @@ spec:
             path: nginx.conf
 KEOF
 
-                            echo "Waiting for frontend build..."
-                            sleep 15
+                            echo "Waiting for Kaniko frontend build..."
+                            sleep 10
                             kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
                                 pod/kaniko-frontend-$BUILD_NUMBER -n jenkins --timeout=300s || true
 
                             STATUS=$(kubectl get pod kaniko-frontend-$BUILD_NUMBER -n jenkins -o jsonpath='{.status.phase}')
-                            echo "Status: $STATUS"
+                            echo "Frontend build status: $STATUS"
 
                             if [ "$STATUS" != "Succeeded" ]; then
+                                echo "Frontend build failed! Logs:"
                                 kubectl logs kaniko-frontend-$BUILD_NUMBER -n jenkins
                                 kubectl delete pod kaniko-frontend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                                 exit 1
                             fi
 
-                            echo "Frontend pushed!"
+                            echo "Frontend image pushed!"
                             kubectl delete pod kaniko-frontend-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                             kubectl delete configmap frontend-src-$BUILD_NUMBER -n jenkins 2>/dev/null || true
                         '''
